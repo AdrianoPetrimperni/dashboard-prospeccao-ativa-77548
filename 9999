@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
-import * as d3 from 'd3'; // Importando D3 para gráficos
+// pages/index.js
+import React, { useState, useEffect, useCallback } from 'react';
+import { onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+import { collection, query, getDocs } from 'firebase/firestore';
+import { db, auth } from '../firebase/init'; // Importa a instância do Firebase
+
+import ConversionFunnelChart from '../components/ConversionFunnelChart';
+import OriginConversionChart from '../components/OriginConversionChart';
 
 // Definição das cores da Taime Agência
 const taimeColors = {
@@ -14,292 +17,56 @@ const taimeColors = {
   darkGray: '#374151',
 };
 
-// Novo URL do logo da Taime Agência
+// URL do logo da Taime Agência
 const taimeLogoUrl = "https://taimeagencia.com.br/wp-content/webp-express/webp-images/uploads/2024/11/agencia-marketing-taime-aceleradora-marketing-vendas-estrategias-redes-sociais-videos-profissionais-campanha-anuncios-online-google-instagram-logo2.png.webp";
 
-// Componente para o Gráfico de Funil de Conversão
-const ConversionFunnelChart = ({ data }) => {
-  const svgRef = useRef();
-
-  useEffect(() => {
-    if (!data || data.Leads === 0) return;
-
-    // Etapas com acentos corrigidos
-    const stages = ['Leads', 'Qualificação', 'Reunião', 'Proposta', 'Negócio Fechado'];
-    const values = stages.map(stage => {
-      // Mapeia os dados brutos para os nomes de estágio exibidos no gráfico
-      if (stage === 'Qualificação') return data.Qualificacao;
-      if (stage === 'Reunião') return data.Reuniao;
-      if (stage === 'Negócio Fechado') return data.NegocioFechado;
-      return data[stage];
-    });
-
-    const margin = { top: 20, right: 30, bottom: 40, left: 50 };
-    const width = 600 - margin.left - margin.right;
-    const height = 300 - margin.top - margin.bottom;
-
-    d3.select(svgRef.current).selectAll("*").remove(); // Limpa SVG anterior
-
-    const svg = d3.select(svgRef.current)
-      .attr("width", width + margin.left + margin.right)
-      .attr("height", height + margin.top + margin.bottom)
-      .append("g")
-      .attr("transform", `translate(${margin.left},${margin.top})`);
-
-    // Escala X (band) para os estágios
-    const xScale = d3.scaleBand()
-      .domain(stages)
-      .range([0, width])
-      .padding(0.3);
-
-    // Escala Y (linear) para os valores
-    const yScale = d3.scaleLinear()
-      .domain([0, d3.max(values) * 1.1]) // Max value + 10% padding
-      .range([height, 0]);
-
-    // Barras do gráfico
-    svg.selectAll(".bar")
-      .data(values)
-      .enter()
-      .append("rect")
-      .attr("class", "bar")
-      .attr("x", (d, i) => xScale(stages[i]))
-      .attr("y", d => yScale(d))
-      .attr("width", xScale.bandwidth())
-      .attr("height", d => height - yScale(d))
-      .attr("fill", taimeColors.primaryPurple)
-      .attr("rx", 5) // Cantos arredondados
-      .attr("ry", 5);
-
-    // Valores nas barras
-    svg.selectAll(".bar-label")
-      .data(values)
-      .enter()
-      .append("text")
-      .attr("class", "bar-label")
-      .attr("x", (d, i) => xScale(stages[i]) + xScale.bandwidth() / 2)
-      .attr("y", d => yScale(d) - 5)
-      .attr("text-anchor", "middle")
-      .attr("fill", taimeColors.lightText)
-      .style("font-size", "12px")
-      .text(d => d);
-
-    // Eixo X
-    svg.append("g")
-      .attr("transform", `translate(0,${height})`)
-      .call(d3.axisBottom(xScale))
-      .selectAll("text")
-      .attr("fill", taimeColors.lightText);
-
-    // Eixo Y
-    svg.append("g")
-      .call(d3.axisLeft(yScale))
-      .selectAll("text")
-      .attr("fill", taimeColors.lightText);
-
-    // Título do Eixo Y
-    svg.append("text")
-      .attr("transform", "rotate(-90)")
-      .attr("y", -margin.left + 10)
-      .attr("x", -height / 2)
-      .attr("dy", "1em")
-      .style("text-anchor", "middle")
-      .attr("fill", taimeColors.lightText)
-      .text("Quantidade");
-
-  }, [data, taimeColors]);
-
-  return (
-    <div className="flex justify-center mb-8">
-      <svg ref={svgRef}></svg>
-    </div>
-  );
-};
-
-// Componente para o Gráfico de Origem de Leads
-const OriginConversionChart = ({ data }) => {
-  const svgRef = useRef();
-
-  useEffect(() => {
-    if (!data || Object.keys(data.origens).length === 0) return;
-
-    const originsData = Object.entries(data.origens).map(([name, values]) => ({
-      name,
-      leads: values.leads,
-      closed: values.negocioFechado,
-      conversion: values.leads > 0 ? (values.negocioFechado / values.leads) * 100 : 0
-    }));
-
-    const margin = { top: 20, right: 30, bottom: 40, left: 50 };
-    const width = 600 - margin.left - margin.right;
-    const height = 300 - margin.top - margin.bottom;
-
-    d3.select(svgRef.current).selectAll("*").remove(); // Limpa SVG anterior
-
-    const svg = d3.select(svgRef.current)
-      .attr("width", width + margin.left + margin.right)
-      .attr("height", height + margin.top + margin.bottom)
-      .append("g")
-      .attr("transform", `translate(${margin.left},${margin.top})`);
-
-    const xScale = d3.scaleBand()
-      .domain(originsData.map(d => d.name))
-      .range([0, width])
-      .padding(0.3);
-
-    const yScale = d3.scaleLinear()
-      .domain([0, d3.max(originsData, d => Math.max(d.leads, d.closed)) * 1.1])
-      .range([height, 0]);
-
-    // Barras para Leads
-    svg.selectAll(".bar-leads")
-      .data(originsData)
-      .enter()
-      .append("rect")
-      .attr("class", "bar-leads")
-      .attr("x", d => xScale(d.name) - (xScale.bandwidth() / 4)) // Deslocamento para barras lado a lado
-      .attr("y", d => yScale(d.leads))
-      .attr("width", xScale.bandwidth() / 2)
-      .attr("height", d => height - yScale(d.leads))
-      .attr("fill", taimeColors.primaryPurple)
-      .attr("rx", 3)
-      .attr("ry", 3);
-
-    // Barras para Negócios Fechados
-    svg.selectAll(".bar-closed")
-      .data(originsData)
-      .enter()
-      .append("rect")
-      .attr("class", "bar-closed")
-      .attr("x", d => xScale(d.name) + (xScale.bandwidth() / 4)) // Deslocamento para barras lado a lado
-      .attr("y", d => yScale(d.closed))
-      .attr("width", xScale.bandwidth() / 2)
-      .attr("height", d => height - yScale(d.closed))
-      .attr("fill", taimeColors.secondaryGreen)
-      .attr("rx", 3)
-      .attr("ry", 3);
-
-    // Valores nas barras (Leads)
-    svg.selectAll(".label-leads")
-      .data(originsData)
-      .enter()
-      .append("text")
-      .attr("x", d => xScale(d.name) - (xScale.bandwidth() / 4) + xScale.bandwidth() / 4)
-      .attr("y", d => yScale(d.leads) - 5)
-      .attr("text-anchor", "middle")
-      .attr("fill", taimeColors.lightText)
-      .style("font-size", "10px")
-      .text(d => d.leads);
-
-    // Valores nas barras (Negócios Fechados)
-    svg.selectAll(".label-closed")
-      .data(originsData)
-      .enter()
-      .append("text")
-      .attr("x", d => xScale(d.name) + (xScale.bandwidth() / 4) + xScale.bandwidth() / 4)
-      .attr("y", d => yScale(d.closed) - 5)
-      .attr("text-anchor", "middle")
-      .attr("fill", taimeColors.lightText)
-      .style("font-size", "10px")
-      .text(d => d.closed);
-
-    // Eixo X
-    svg.append("g")
-      .attr("transform", `translate(0,${height})`)
-      .call(d3.axisBottom(xScale))
-      .selectAll("text")
-      .attr("fill", taimeColors.lightText);
-
-    // Eixo Y
-    svg.append("g")
-      .call(d3.axisLeft(yScale))
-      .selectAll("text")
-      .attr("fill", taimeColors.lightText);
-
-    // Legenda
-    svg.append("rect").attr("x", width - 120).attr("y", 0).attr("width", 10).attr("height", 10).attr("fill", taimeColors.primaryPurple).attr("rx",2).attr("ry",2);
-    svg.append("text").attr("x", width - 105).attr("y", 9).text("Leads").attr("fill", taimeColors.lightText).style("font-size", "10px");
-    svg.append("rect").attr("x", width - 120).attr("y", 20).attr("width", 10).attr("height", 10).attr("fill", taimeColors.secondaryGreen).attr("rx",2).attr("ry",2);
-    svg.append("text").attr("x", width - 105).attr("y", 29).text("Fechados").attr("fill", taimeColors.lightText).style("font-size", "10px");
-
-
-  }, [data, taimeColors]);
-
-  return (
-    <div className="flex justify-center mb-8">
-      <svg ref={svgRef}></svg>
-    </div>
-  );
-};
-
-
-function App() {
-  const [db, setDb] = useState(null);
-  const [auth, setAuth] = useState(null);
-  const [userId, setUserId] = useState(null); // Mantém userId para autenticação Firebase, mas não o exibe
+function Home() { // Componente principal renomeado para Home
+  const [userId, setUserId] = useState(null);
   const [loadingFirebase, setLoadingFirebase] = useState(true);
   const [dashboardData, setDashboardData] = useState([]);
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]); // Padrão para hoje
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]); // Padrão para hoje
 
-  // Configuração do Firebase fornecida pelo usuário
-  const firebaseConfig = {
-    apiKey: "AIzaSyC4TCs_jnYgbLautTgKHZloeMnV3RuVKrM",
-    authDomain: "dashboard-prospeccao-ativa.firebaseapp.com",
-    projectId: "dashboard-prospeccao-ativa",
-    storageBucket: "dashboard-prospeccao-ativa.firebasestorage.app",
-    messagingSenderId: "878548277840",
-    appId: "1:878548277840:web:8d83dd723cdcfc975e8f55"
-  };
-
   // Get the app ID from the global variable (provided by Canvas)
-  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+  // Certifique-se de que '__app_id' seja acessível no ambiente Next.js se vier de fora.
+  // Em um ambiente Vercel/Next.js real, você pode usar variáveis de ambiente ou passar via Context.
+  const appId = typeof window !== 'undefined' && typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-app-id';
+
 
   useEffect(() => {
-    // Initialize Firebase
-    try {
-      const app = initializeApp(firebaseConfig);
-      const firestoreDb = getFirestore(app);
-      const firebaseAuth = getAuth(app);
-
-      setDb(firestoreDb);
-      setAuth(firebaseAuth);
-
-      // Sign in anonymously or with custom token
-      const signIn = async () => {
-        try {
-          if (typeof __initial_auth_token !== 'undefined') {
-            try {
-              await signInWithCustomToken(firebaseAuth, __initial_auth_token);
-            } catch (tokenError) {
-              console.warn("Erro ao autenticar com token personalizado, tentando autenticação anônima:", tokenError);
-              await signInAnonymously(firebaseAuth); // Fallback to anonymous if custom token fails
-            }
-          } else {
-            await signInAnonymously(firebaseAuth);
+    // Autenticação Firebase
+    const signInUser = async () => {
+      try {
+        if (typeof window !== 'undefined' && typeof window.__initial_auth_token !== 'undefined') {
+          try {
+            await signInWithCustomToken(auth, window.__initial_auth_token);
+          } catch (tokenError) {
+            console.warn("Erro ao autenticar com token personalizado, tentando autenticação anônima:", tokenError);
+            await signInAnonymously(auth);
           }
-        } catch (authError) {
-          console.error("Erro ao autenticar Firebase:", authError);
-        } finally {
-          setLoadingFirebase(false);
-        }
-      };
-
-      onAuthStateChanged(firebaseAuth, (user) => {
-        if (user) {
-          setUserId(user.uid);
         } else {
-          setUserId(null);
+          await signInAnonymously(auth);
         }
+      } catch (authError) {
+        console.error("Erro ao autenticar Firebase:", authError);
+      } finally {
         setLoadingFirebase(false);
-      });
+      }
+    };
 
-      signIn();
-    } catch (error) {
-      console.error("Erro ao inicializar Firebase:", error);
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        setUserId(null);
+      }
       setLoadingFirebase(false);
-    }
-  }, []); // Run only once on component mount
+    });
+
+    signInUser();
+
+    return () => unsubscribe(); // Cleanup on unmount
+  }, []);
 
   const fetchData = useCallback(async () => {
     if (!db || !userId) {
@@ -307,7 +74,7 @@ function App() {
       return;
     }
 
-    setDashboardData([]); // Clear previous data
+    setDashboardData([]); // Limpa dados anteriores
 
     try {
       const collectionPath = `artifacts/${appId}/public/data/prospeccaoDiaria`;
@@ -315,23 +82,23 @@ function App() {
       const querySnapshot = await getDocs(q);
 
       let aggregatedData = {
-        Leads: 0,
-        Qualificacao: 0,
-        Reuniao: 0,
-        Proposta: 0,
-        NegocioFechado: 0,
-        origens: {} // To store aggregated data by origin
+        Leads: 0, Qualificacao: 0, Reuniao: 0, Proposta: 0, NegocioFechado: 0,
+        origens: { "Email": { leads: 0, qualificacao: 0, reuniao: 0, proposta: 0, negocioFechado: 0 },
+                   "Lista": { leads: 0, qualificacao: 0, reuniao: 0, proposta: 0, negocioFechado: 0 },
+                   "LinkedIn": { leads: 0, qualificacao: 0, reuniao: 0, proposta: 0, negocioFechado: 0 },
+                   "Outros": { leads: 0, qualificacao: 0, reuniao: 0, proposta: 0, negocioFechado: 0 }
+                 }
       };
 
       const selectedStartDate = new Date(startDate);
-      selectedStartDate.setHours(0, 0, 0, 0); // Start of the day
+      selectedStartDate.setHours(0, 0, 0, 0);
       const selectedEndDate = new Date(endDate);
-      selectedEndDate.setHours(23, 59, 59, 999); // End of the day
+      selectedEndDate.setHours(23, 59, 59, 999);
 
       querySnapshot.forEach((doc) => {
         const data = doc.data();
-        const docDate = new Date(data.date); // Assuming 'date' is in 'YYYY-MM-DD' format from Firestore
-        docDate.setHours(0, 0, 0, 0); // Normalize to start of day for comparison
+        const docDate = new Date(data.date);
+        docDate.setHours(0, 0, 0, 0);
 
         if (docDate >= selectedStartDate && docDate <= selectedEndDate) {
           aggregatedData.Leads += data.Leads || 0;
@@ -340,38 +107,37 @@ function App() {
           aggregatedData.Proposta += data.Proposta || 0;
           aggregatedData.NegocioFechado += data.NegocioFechado || 0;
 
-          // Aggregate origin data
           if (data.origens) {
             for (const originKey in data.origens) {
-              if (!aggregatedData.origens[originKey]) {
-                aggregatedData.origens[originKey] = { leads: 0, qualificacao: 0, reuniao: 0, proposta: 0, negocioFechado: 0 };
+              if (aggregatedData.origens[originKey]) {
+                aggregatedData.origens[originKey].leads += data.origens[originKey].leads || 0;
+                aggregatedData.origens[originKey].qualificacao += data.origens[originKey].qualificacao || 0;
+                aggregatedData.origens[originKey].reuniao += data.origens[originKey].reuniao || 0;
+                aggregatedData.origens[originKey].proposta += data.origens[originKey].proposta || 0;
+                aggregatedData.origens[originKey].negocioFechado += data.origens[originKey].negocioFechado || 0;
               }
-              aggregatedData.origens[originKey].leads += data.origens[originKey].leads || 0;
-              aggregatedData.origens[originKey].qualificacao += data.origens[originKey].qualificacao || 0;
-              aggregatedData.origens[originKey].reuniao += data.origens[originKey].reuniao || 0;
-              aggregatedData.origens[originKey].proposta += data.origens[originKey].proposta || 0;
-              aggregatedData.origens[originKey].negocioFechado += data.origens[originKey].negocioFechado || 0;
             }
           }
         }
       });
-      setDashboardData([aggregatedData]); // Wrap in array to match previous structure, but it's aggregated data
+      setDashboardData([aggregatedData]);
     } catch (error) {
       console.error("Erro ao buscar dados do Firestore:", error);
     }
-  }, [db, userId, startDate, endDate, appId]); // Re-fetch data when Firebase is ready or filters change
+  }, [userId, startDate, endDate, appId]); // Removido 'db' das dependências pois é importado diretamente
 
   useEffect(() => {
-    if (db && userId) {
+    // Busca dados somente quando o Firebase estiver pronto (userId não nulo)
+    if (userId) {
       fetchData();
     }
-  }, [db, userId, fetchData]); // Initial fetch when auth is ready
+  }, [userId, fetchData]);
 
   const handleResetFilter = () => {
     const today = new Date().toISOString().split('T')[0];
     setStartDate(today);
     setEndDate(today);
-    // fetchData will be called via useEffect due to state change
+    // fetchData será chamado via useEffect devido à mudança de estado
   };
 
   if (loadingFirebase) {
@@ -416,7 +182,7 @@ function App() {
 
     analysis.push("Com base nos seus dados atuais:\n");
 
-    if (leadsToQualificacao < 0.5) { // Threshold for low conversion (example: less than 50%)
+    if (leadsToQualificacao < 0.5) { // Limite para baixa conversão (exemplo: menos de 50%)
       analysis.push(`- **Leads para Qualificação (${calculateConversion(data.Leads, data.Qualificacao)}):** A taxa de conversão desta etapa está **baixa**. Isso pode indicar que a abordagem inicial com os leads precisa ser revisada. Considere otimizar as mensagens de primeiro contato, personalizar a comunicação e focar em entender as dores do lead antes de apresentar soluções.\n`);
     } else if (leadsToQualificacao >= 0.75) {
         analysis.push(`- **Leads para Qualificação (${calculateConversion(data.Leads, data.Qualificacao)}):** A taxa de conversão desta etapa está **excelente**. Mantenha a qualidade da sua abordagem inicial e continue aprimorando a qualificação.\n`);
@@ -424,15 +190,15 @@ function App() {
         analysis.push(`- **Leads para Qualificação (${calculateConversion(data.Leads, data.Qualificacao)}):** A taxa de conversão desta etapa está **boa**. Continue monitorando e buscando melhorias incrementais na sua abordagem inicial.\n`);
     }
 
-    if (qualificacaoToReuniao < 0.6) { // Threshold for low conversion (example: less than 60%)
-      analysis.push(`- **Qualificação para Reunião (${calculateConversion(data.Qualificacao, data.Reuniao)}):** A conversão de leads qualificados para reuniões agendadas parece **requer atenção**. O script de agendamento de reuniões pode precisar de ajustes para ser mais persuasivo e destacar o valor do encontro. Certifique-se de que os qualificadores estão sendo eficazes em identificar leads com real potencial.\n`);
+    if (qualificacaoToReuniao < 0.6) { // Limite para baixa conversão (exemplo: menos de 60%)
+      analysis.push(`- **Qualificação para Reunião (${calculateConversion(data.Qualificacao, data.Reuniao)}):** A conversão de leads qualificados para reuniões agendadas parece **requerer atenção**. O script de agendamento de reuniões pode precisar de ajustes para ser mais persuasivo e destacar o valor do encontro. Certifique-se de que os qualificadores estão sendo eficazes em identificar leads com real potencial.\n`);
     } else if (qualificacaoToReuniao >= 0.8) {
         analysis.push(`- **Qualificação para Reunião (${calculateConversion(data.Qualificacao, data.Reuniao)}):** A taxa de agendamento de reuniões com leads qualificados está **forte**. Isso demonstra um bom alinhamento entre qualificação e a proposta de valor da reunião.\n`);
     } else {
         analysis.push(`- **Qualificação para Reunião (${calculateConversion(data.Qualificacao, data.Reuniao)}):** A taxa de agendamento de reuniões está **satisfatória**. Revise periodicamente o script para otimizações pontuais.\n`);
     }
 
-    if (reuniaoToProposta < 0.7) { // Threshold for low conversion (example: less than 70%)
+    if (reuniaoToProposta < 0.7) { // Limite para baixa conversão (exemplo: menos de 70%)
       analysis.push(`- **Reunião para Proposta (${calculateConversion(data.Reuniao, data.Proposta)}):** Se a taxa de reuniões para propostas está **baixa**, talvez seja necessário aprimorar o script da reunião, a capacidade de identificar as necessidades do cliente durante a conversa e a apresentação da solução. Certifique-se de que as propostas estão sendo geradas com base em um entendimento aprofundado.\n`);
     } else if (reuniaoToProposta >= 0.85) {
         analysis.push(`- **Reunião para Proposta (${calculateConversion(data.Reuniao, data.Proposta)}):** A conversão de reuniões para propostas é **muito boa**. Isso indica que as reuniões são eficazes em levar o cliente ao próximo passo.\n`);
@@ -440,7 +206,7 @@ function App() {
         analysis.push(`- **Reunião para Proposta (${calculateConversion(data.Reuniao, data.Proposta)}):** A conversão de reuniões para propostas está **decente**. Mantenha o foco em apresentar soluções alinhadas às necessidades do cliente.\n`);
     }
 
-    if (propostaToFechado < 0.4) { // Threshold for low conversion (example: less than 40%)
+    if (propostaToFechado < 0.4) { // Limite para baixa conversão (exemplo: menos de 40%)
       analysis.push(`- **Proposta para Negócio Fechado (${calculateConversion(data.Proposta, data.NegocioFechado)}):** Uma taxa de fechamento de propostas **baixa** pode sugerir que o processo de negociação ou o próprio conteúdo da proposta precisam ser mais persuasivos. Revise objeções comuns, melhore a comunicação de valor e certifique-se de que a proposta é competitiva e clara.\n`);
     } else if (propostaToFechado >= 0.6) {
         analysis.push(`- **Proposta para Negócio Fechado (${calculateConversion(data.Proposta, data.NegocioFechado)}):** A taxa de fechamento de propostas é **alta**, demonstrando grande eficácia na negociação e no valor percebido das suas ofertas.\n`);
@@ -448,7 +214,7 @@ function App() {
         analysis.push(`- **Proposta para Negócio Fechado (${calculateConversion(data.Proposta, data.NegocioFechado)}):** A taxa de fechamento de propostas é **razoável**. Busque refinar a negociação e o acompanhamento pós-proposta.\n`);
     }
 
-    // Analyze origin channels
+    // Análise dos canais de origem
     let bestOrigin = null;
     let highestConversion = -1;
     let worstOrigin = null;
@@ -478,7 +244,6 @@ function App() {
     return analysis.join('');
   };
 
-
   return (
     <div className="min-h-screen font-inter p-4" style={{ backgroundColor: taimeColors.darkBackground, color: taimeColors.lightText }}>
       {/* Header */}
@@ -492,7 +257,6 @@ function App() {
       </header>
 
       {/* Filter Section */}
-      {/* Ajustado o espaçamento entre os elementos do filtro para um valor menor (gap-x-1) */}
       <section className="mb-8 p-6 bg-gray-800 rounded-lg shadow-md flex flex-col md:flex-row items-center justify-center gap-x-1 space-y-4 md:space-y-0">
         <div className="flex items-center gap-x-1">
           <label htmlFor="startDate" className="font-semibold">De:</label>
@@ -538,7 +302,6 @@ function App() {
           <div key={stage} className="p-6 bg-gray-800 rounded-lg shadow-md text-center flex flex-col justify-between w-full max-w-xs" style={{ borderBottom: `4px solid ${taimeColors.secondaryGreen}` }}>
             <h2 className="text-xl font-semibold mb-2" style={{ color: taimeColors.primaryPurple }}>{stage}</h2>
             <p className="text-4xl font-bold mb-4" style={{ color: taimeColors.lightText }}>{
-              // Mapeia o estágio exibido para a chave de dado correspondente
               stage === 'Qualificação' ? data.Qualificacao :
               stage === 'Reunião' ? data.Reuniao :
               stage === 'Negócio Fechado' ? data.NegocioFechado :
@@ -547,12 +310,10 @@ function App() {
             {index > 0 && (
               <p className="text-md font-medium" style={{ color: taimeColors.mediumGray }}>
                 Taxa de Conversão: <span style={{ color: taimeColors.secondaryGreen }}>{calculateConversion(
-                  // Mapeia o estágio anterior para a chave de dado correspondente
                   array[index - 1] === 'Qualificação' ? data.Qualificacao :
                   array[index - 1] === 'Reunião' ? data.Reuniao :
                   array[index - 1] === 'Negócio Fechado' ? data.NegocioFechado :
                   data[array[index - 1]],
-                  // Mapeia o estágio atual para a chave de dado correspondente
                   stage === 'Qualificação' ? data.Qualificacao :
                   stage === 'Reunião' ? data.Reuniao :
                   stage === 'Negócio Fechado' ? data.NegocioFechado :
@@ -560,7 +321,6 @@ function App() {
                 )}</span>
               </p>
             )}
-            {/* Added a placeholder for the first card's conversion to align */}
             {index === 0 && (
               <p className="text-md font-medium" style={{ color: taimeColors.mediumGray }}>
                 Taxa de Fechamento Total: <span style={{ color: taimeColors.secondaryGreen }}>{calculateConversionOverall('NegocioFechado')}</span>
@@ -654,4 +414,4 @@ const marked = {
   }
 };
 
-export default App;
+export default Home;
